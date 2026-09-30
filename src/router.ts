@@ -3,6 +3,7 @@ import micromatch from "micromatch";
 import { posix, resolve, sep } from "node:path";
 
 import type { RouteManifestEntry } from "./manifest.ts";
+import { compareStrings, insertSorted } from "./order.ts";
 
 export const glob = (path: string) => fg.sync(path, { absolute: true });
 
@@ -71,7 +72,7 @@ export class BaseFileSystemRouter extends EventTarget {
   }
 
   async buildRoutes(): Promise<RouteManifestEntry[]> {
-    for (const src of glob(this.glob()).sort()) {
+    for (const src of glob(this.glob()).sort(compareStrings)) {
       await this.addRoute(src);
     }
 
@@ -92,10 +93,20 @@ export class BaseFileSystemRouter extends EventTarget {
     throw new Error("Not implemented");
   }
 
-  _addRoute(route: RouteManifestEntry) {
+  /** Source file of each entry: the key the manifest is ordered by. */
+  private sources = new WeakMap<RouteManifestEntry, string>();
+
+  /**
+   * The only insert into `routes`, for the cold scan and dev changes alike.
+   * Entries are kept sorted by source file, so an edited route lands back
+   * where it was and a new one lands where a fresh scan would put it.
+   */
+  _addRoute(route: RouteManifestEntry, src: string) {
+    this.sources.set(route, src);
+
     const idx = this.routes.findIndex(r => r.path === route.path);
     if (idx >= 0) this.routes.splice(idx, 1);
-    this.routes.push(route);
+    insertSorted(this.routes, route, r => this.sources.get(r)!);
 
     return idx >= 0;
   }
@@ -106,7 +117,7 @@ export class BaseFileSystemRouter extends EventTarget {
       try {
         const route = this.toRoute(src);
         if (route) {
-          this._addRoute(route);
+          this._addRoute(route, src);
           this.reload(route.path, "add");
         }
       } catch (e) {
@@ -132,7 +143,7 @@ export class BaseFileSystemRouter extends EventTarget {
       try {
         const route = this.toRoute(src);
         if (route) {
-          const updated = this._addRoute(route);
+          const updated = this._addRoute(route, src);
           this.reload(route.path, updated ? "update" : "add");
         } else {
           this.removeRoute(src_);

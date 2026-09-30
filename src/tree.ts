@@ -1,4 +1,5 @@
 import type { RouteManifestEntry } from "./manifest.ts";
+import { compareStrings } from "./order.ts";
 
 /**
  * Nesting and group-stripping for the neutral route manifest.
@@ -45,8 +46,10 @@ export function buildRouteTree(entries: readonly RouteManifestEntry[]): RouteTre
     );
   }
 
+  // Parents (path prefixes - therefore always shorter) must be placed before their
+  // children - the tie-break only fixes sibling order.
   return [...entries]
-    .sort((a, b) => (a.path.length - b.path.length) || a.path.localeCompare(b.path))
+    .sort((a, b) => (a.path.length - b.path.length) || compareStrings(a.path, b.path))
     .reduce((routes: RouteTreeEntry[], route) => {
       processRoute(routes, route, route.path);
       return routes;

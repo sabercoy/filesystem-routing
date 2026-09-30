@@ -134,6 +134,49 @@ describe("PageFileSystemRouter", () => {
     expect(events).toEqual(["add:/contact", "remove:/contact"]);
   });
 
+  it("keeps scan order when routes change or are added", async () => {
+    const dir = createRouteTree({
+      "about.tsx": "export default () => <h1>About</h1>;",
+      "index.tsx": "export default () => <h1>Home</h1>;",
+      "zebra.tsx": "export default () => <h1>Z</h1>;"
+    });
+    const router = new PageFileSystemRouter({ dir, extensions: ["tsx"] });
+    await router.getRoutes();
+    expect(router.routes.map(route => route.path)).toEqual(["/about", "/", "/zebra"]);
+
+    // An edit replaces the route in place instead of moving it to the end.
+    await router.updateRoute(path.join(dir, "about.tsx"));
+    expect(router.routes.map(route => route.path)).toEqual(["/about", "/", "/zebra"]);
+
+    // A new file lands where a fresh scan would put it.
+    const contact = path.join(dir, "contact.tsx");
+    fs.writeFileSync(contact, "export default () => <h1>Contact</h1>;");
+    await router.addRoute(contact);
+    const fresh = await new PageFileSystemRouter({ dir, extensions: ["tsx"] }).getRoutes();
+    expect(router.routes.map(route => route.path)).toEqual(fresh.map(route => route.path));
+    expect(router.routes.map(route => route.path)).toEqual(["/about", "/contact", "/", "/zebra"]);
+  });
+
+  it("orders a route by the file that wins its path", async () => {
+    // `x.md` and `x.tsx` both map to `/x`; `x.p.tsx` sorts between them.
+    const dir = createRouteTree({
+      "x.md": "# X",
+      "x.p.tsx": "export default () => <h1>X.p</h1>;"
+    });
+    const config = { dir, extensions: ["md", "tsx"] };
+    const router = new PageFileSystemRouter(config);
+    await router.getRoutes();
+    expect(router.routes.map(route => route.path)).toEqual(["/x", "/x.p"]);
+
+    // `x.tsx` takes over `/x`, so `/x` moves to where `x.tsx` sorts.
+    const x = path.join(dir, "x.tsx");
+    fs.writeFileSync(x, "export default () => <h1>X</h1>;");
+    await router.addRoute(x);
+    const fresh = await new PageFileSystemRouter(config).getRoutes();
+    expect(router.routes.map(route => route.path)).toEqual(fresh.map(route => route.path));
+    expect(router.routes.map(route => route.path)).toEqual(["/x.p", "/x"]);
+  });
+
   it("omits component refs when components are off", async () => {
     const dir = createRouteTree({
       "index.tsx": `
